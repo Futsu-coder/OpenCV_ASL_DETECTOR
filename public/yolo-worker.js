@@ -19,8 +19,9 @@ self.onmessage = async (e) => {
         classes = payload.classes;
         try {
             ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
-            // เปิดใช้ CPU สูงสุด 4 Core เพื่อช่วยให้ 640 ประมวลผลได้ไวที่สุดเท่าที่จะทำได้
-            ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
+            
+            // ⚠️ จุดที่ต้องแก้: บังคับให้ใช้แค่ 1 Thread เพื่อแก้ปัญหา crossOrigin บน Vercel
+            ort.env.wasm.numThreads = 1; 
             
             session = await ort.InferenceSession.create(payload.modelPath, {
                 executionProviders: ['wasm']
