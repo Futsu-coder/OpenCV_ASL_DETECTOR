@@ -19,9 +19,7 @@ self.onmessage = async (e) => {
         classes = payload.classes;
         try {
             ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
-            
-            // ⚠️ จุดที่ต้องแก้: บังคับให้ใช้แค่ 1 Thread เพื่อแก้ปัญหา crossOrigin บน Vercel
-            ort.env.wasm.numThreads = 1; 
+            ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
             
             session = await ort.InferenceSession.create(payload.modelPath, {
                 executionProviders: ['wasm']
@@ -37,7 +35,7 @@ self.onmessage = async (e) => {
 
         try {
             const imgData = payload.imageData;
-            const imgSize = 640 * 640; // ⚠️ กลับมาใช้ภาพขนาด 640
+            const imgSize = 416 * 416; // ⚠️ เปลี่ยนสเกลเป็น 416
             const floatData = new Float32Array(3 * imgSize);
             
             for (let i = 0; i < imgSize; i++) {
@@ -46,12 +44,12 @@ self.onmessage = async (e) => {
                 floatData[i + imgSize * 2] = imgData[i * 4 + 2] / 255.0;
             }
 
-            const tensor = new ort.Tensor("float32", floatData, [1, 3, 640, 640]); // ⚠️ สเกล 640
+            const tensor = new ort.Tensor("float32", floatData, [1, 3, 416, 416]); // ⚠️ รูปขนาด 416x416
             const results = await session.run({ images: tensor });
             const output = results[session.outputNames[0]].data;
 
             const numClasses = classes.length;
-            const numAnchors = 8400; // ⚠️ จำนวนจุดประมวลผลสำหรับโมเดล 640
+            const numAnchors = 3549; // ⚠️ โมเดล 416 จะมีจุดประมวลผล 3,549 จุด (ลดลงจาก 8,400)
             let boxes = [];
 
             for (let i = 0; i < numAnchors; i++) {
@@ -62,7 +60,8 @@ self.onmessage = async (e) => {
                     if (prob > maxProb) { maxProb = prob; classId = c; }
                 }
 
-                if (maxProb > 0.60) { // ⚠️ ตั้งเกณฑ์ 60% เพื่อคัดกรองพัดลมหรือผ้าม่านออก
+                // 🌟 ปรับเกณฑ์เหลือแค่ 20% เพื่อให้กล่องเด้งจับมือคุณทันทีที่มันเห็น!
+                if (maxProb > 0.20) { 
                     const xc = output[0 * numAnchors + i];
                     const yc = output[1 * numAnchors + i];
                     const w = output[2 * numAnchors + i];
@@ -82,8 +81,7 @@ self.onmessage = async (e) => {
             self.postMessage({ type: 'RESULT', boxes: finalBoxes });
 
         } catch (error) {
-            console.error("Worker Error details:", error);
-            // ⚠️ ป้องกัน AI สลบ ถ้าพังให้ส่งกล่องว่างกลับไป
+            console.error("Worker Error:", error);
             self.postMessage({ type: 'RESULT', boxes: [] }); 
         }
     }
