@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// โครงสร้างข้อมูลสำหรับเก็บประวัติรูปภาพ
 interface DetectHistory {
   id: number;
   image: string;
@@ -15,25 +14,17 @@ export default function UltimatePerformancePage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-
   const workerRef = useRef<Worker | null>(null);
   const isWorkerBusy = useRef(false);
   const boxesRef = useRef<any[]>([]);
   const smoothBoxRef = useRef<any>(null);
-  
   const lastDetectTimeRef = useRef<number>(Date.now());
   const classesRef = useRef<string[]>([]);
-
-  // ตัวคุมการถ่ายรูป เพื่อไม่ให้ถ่ายรูปรัวเกินไป
   const lastCaptureRef = useRef({ label: "", time: 0 });
-
-  // State ต่างๆ สำหรับ UI
   const [status, setStatus] = useState("กำลังเตรียมระบบแปลภาษา...");
   const [detection, setDetection] = useState({ label: "-", confidence: 0, isDetecting: false });
   const [isStreaming, setIsStreaming] = useState(false);
   const [history, setHistory] = useState<DetectHistory[]>([]);
-  
-  // 🌟 State เช็กว่าโมเดลโหลดเสร็จหรือยัง (คุมปุ่มเปิดกล้อง)
   const [isModelReady, setIsModelReady] = useState(false);
 
   useEffect(() => {
@@ -45,8 +36,6 @@ export default function UltimatePerformancePage() {
         const resJson = await fetch("/models/classes.json");
         const classNames = await resJson.json();
         classesRef.current = classNames;
-
-        // ⚠️ โหลดโมเดล (ต้องมั่นใจว่าไฟล์นี้คือขนาด 416 นะครับ!)
         worker.postMessage({
           type: "INIT",
           payload: { modelPath: "/models/yolo_asl.onnx", classes: classNames } 
@@ -60,11 +49,10 @@ export default function UltimatePerformancePage() {
       const { type, boxes, error } = e.data;
       if (type === "READY") {
         setStatus("กล้องพร้อมแล้วกดปุ่มได้");
-        setIsModelReady(true); // 🌟 ปลดล็อกปุ่มเปิดกล้อง
+        setIsModelReady(true);
       } else if (type === "RESULT") {
         boxesRef.current = boxes;
         lastDetectTimeRef.current = Date.now(); 
-
         if (boxes.length > 0) {
           const best = boxes[0];
           if (best.prob >= 0.50) {
@@ -84,27 +72,21 @@ export default function UltimatePerformancePage() {
         setStatus(`ข้อผิดพลาด: ${error}`);
       }
     };
-
     initAI();
-
     return () => worker.terminate();
   }, []);
 
   function masterLoop() {
     if (!videoRef.current || !canvasRef.current || !streamRef.current) return;
-
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d")!;
-
     if (video.videoWidth > 0) {
       if (canvas.width !== video.videoWidth) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
       }
-
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
       if (!isWorkerBusy.current && workerRef.current) {
         isWorkerBusy.current = true;
         const offCanvas = document.createElement("canvas");
@@ -115,8 +97,6 @@ export default function UltimatePerformancePage() {
         const imageData = offCtx.getImageData(0, 0, 416, 416).data; 
         workerRef.current.postMessage({ type: "DETECT", payload: { imageData } });
       }
-
-      // ระบบลบกล่องทิ้งเมื่อค้างเกิน 1 วินาที
       if (Date.now() - lastDetectTimeRef.current > 1000) {
         boxesRef.current = [];
         smoothBoxRef.current = null;
@@ -126,7 +106,6 @@ export default function UltimatePerformancePage() {
       const scaleX = canvas.width / 416; 
       const scaleY = canvas.height / 416; 
       const currentBoxes = boxesRef.current;
-
       if (currentBoxes.length > 0) {
         const target = currentBoxes[0];
         if (!smoothBoxRef.current || smoothBoxRef.current.classId !== target.classId) {
@@ -143,11 +122,9 @@ export default function UltimatePerformancePage() {
         const box = smoothBoxRef.current;
         const rx = box.x * scaleX, ry = box.y * scaleY, rw = box.w * scaleX, rh = box.h * scaleY;
         const labelText = classesRef.current[box.classId];
-        
         const isConfident = box.prob >= 0.50;
         const boxColor = isConfident ? "#10B981" : "#F59E0B"; 
         const displayText = isConfident ? `${labelText} ${Math.round(box.prob * 100)}%` : `กำลังวิเคราะห์...`;
-
         ctx.strokeStyle = boxColor;
         ctx.lineWidth = 6; 
         ctx.strokeRect(rx, ry, rw, rh);
@@ -156,8 +133,6 @@ export default function UltimatePerformancePage() {
         ctx.fillStyle = "#FFFFFF"; 
         ctx.font = "bold 24px Arial";
         ctx.fillText(displayText, rx + 10, ry - 12);
-
-        // 🌟 ระบบถ่ายรูปอัตโนมัติ (แชะภาพเมื่อมั่นใจเกิน 70%)
         if (box.prob >= 0.60) {
           const now = Date.now();
           const timeSinceLastCapture = now - lastCaptureRef.current.time;
@@ -183,12 +158,10 @@ export default function UltimatePerformancePage() {
         smoothBoxRef.current = null;
       }
     }
-
     if (streamRef.current) {
       requestAnimationFrame(masterLoop);
     }
   }
-
   async function startCamera() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
@@ -204,25 +177,21 @@ export default function UltimatePerformancePage() {
   }
 
   function stopCamera() {
-    // 1. ปิดสตรีมกล้อง
     setIsStreaming(false);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     
-    // 2. 🌟 ล้างหน้าจอ Canvas ไม่ให้ภาพค้าง
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext("2d");
       if (ctx) {
         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
       }
     }
-
-    // 3. เคลียร์ข้อมูลทั้งหมด
     boxesRef.current = [];
     smoothBoxRef.current = null;
     setDetection({ label: "-", confidence: 0, isDetecting: false });
-    setStatus("🔴 ปิดกล้องแล้ว");
+    setStatus("ปิดกล้องแล้ว");
   }
 
   function clearHistory() {
@@ -231,7 +200,6 @@ export default function UltimatePerformancePage() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col p-4 md:p-8 font-sans selection:bg-green-500 selection:text-white">
-      {/* Header Section */}
       <header className="w-full max-w-4xl mx-auto text-center mb-6 md:mb-10 mt-4">
         <h1 className="text-3xl md:text-5xl font-black text-white mb-3 tracking-tight">
           แปลภาษามือ <span className="text-green-400">ASL</span> 🤟
@@ -241,10 +209,7 @@ export default function UltimatePerformancePage() {
         </p>
       </header>
 
-      {/* Main Content */}
-      <main className="flex flex-col md:flex-row w-full max-w-5xl mx-auto gap-6 items-stretch justify-center">
-        
-        {/* Camera Area */}
+      <main className="flex flex-col md:flex-row w-full max-w-5xl mx-auto gap-6 items-stretch justify-center">        
         <div className="flex-1 w-full flex flex-col items-center">
           <div className={`relative w-full max-w-2xl aspect-[4/3] rounded-3xl overflow-hidden bg-gray-900 border-4 transition-colors duration-300 shadow-2xl ${isStreaming ? 'border-green-500 shadow-green-900/20' : 'border-gray-800'}`}>
             {!isStreaming && (
@@ -257,8 +222,6 @@ export default function UltimatePerformancePage() {
             <video ref={videoRef} className="hidden" playsInline muted />
           </div>
         </div>
-
-        {/* Results & Controls Area */}
         <div className="w-full md:w-80 flex flex-col gap-4 shrink-0">
           
           <div className="bg-gray-900 border border-gray-800 p-6 rounded-3xl text-center shadow-lg flex-1 flex flex-col justify-center min-h-[160px]">
@@ -317,12 +280,11 @@ export default function UltimatePerformancePage() {
         </div>
       </main>
 
-      {/* 🌟 History Gallery Section */}
       {history.length > 0 && (
         <div className="w-full max-w-5xl mx-auto mt-10 animate-fade-in">
           <div className="flex justify-between items-center mb-4 px-2">
             <h3 className="text-xl font-bold text-white flex items-center gap-2">
-              📸 ประวัติการทำภาษามือล่าสุด
+              ประวัติการทำภาษามือล่าสุด
             </h3>
             <button 
               onClick={clearHistory}
@@ -353,9 +315,7 @@ export default function UltimatePerformancePage() {
             ))}
           </div>
         </div>
-      )}
-      
-      {/* Styles สำหรับ Scrollbar และ Animation */}
+      )}      
       <style dangerouslySetInnerHTML={{__html: `
         .custom-scrollbar::-webkit-scrollbar { height: 8px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: #1f2937; border-radius: 4px; }
