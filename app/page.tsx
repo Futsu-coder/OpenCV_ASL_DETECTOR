@@ -28,7 +28,32 @@ export default function UltimatePerformancePage() {
   const [history, setHistory] = useState<DetectHistory[]>([]);
   const [isModelReady, setIsModelReady] = useState(false);
   
-  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
+  // 🌟 เพิ่ม State สำหรับระบบเลือกกล้อง
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+
+  // 🌟 ฟังก์ชันค้นหากล้องทั้งหมดในเครื่อง
+  useEffect(() => {
+    async function getCameras() {
+      try {
+        // แอบเปิดกล้องแว๊บเดียวเพื่อขอสิทธิ์ จะได้อ่านชื่อกล้อง (Label) ได้
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter(device => device.kind === 'videoinput');
+        
+        setCameras(videoInputs);
+        if (videoInputs.length > 0) {
+          setSelectedDeviceId(videoInputs[0].deviceId); // เลือกกล้องตัวแรกเป็นค่าเริ่มต้น
+        }
+        
+        // ปิดกล้องที่แอบเปิด
+        tempStream.getTracks().forEach(t => t.stop());
+      } catch (err) {
+        console.error("ไม่สามารถดึงข้อมูลกล้องได้:", err);
+      }
+    }
+    getCameras();
+  }, []);
 
   useEffect(() => {
     const worker = new Worker("/yolo-worker.js");
@@ -167,9 +192,14 @@ export default function UltimatePerformancePage() {
     }
   }
 
+  // 🌟 อัปเดตการเปิดกล้องให้ใช้ ID กล้องที่เลือก
   async function startCamera() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
+      const constraints = selectedDeviceId 
+        ? { video: { deviceId: { exact: selectedDeviceId } } } 
+        : { video: true };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
       videoRef.current!.srcObject = stream;
       await videoRef.current!.play();
@@ -197,23 +227,23 @@ export default function UltimatePerformancePage() {
     setStatus("ปิดกล้องแล้ว");
   }
 
-  async function toggleCamera() {
-    const newMode = facingMode === "user" ? "environment" : "user";
-    setFacingMode(newMode);
+  // 🌟 ฟังก์ชันเมื่อผู้ใช้เปลี่ยนตัวเลือกกล้องใน Dropdown
+  async function handleCameraChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const newDeviceId = e.target.value;
+    setSelectedDeviceId(newDeviceId);
 
+    // ถ้ากล้องกำลังเปิดอยู่ ให้สลับภาพกล้องให้ทันที
     if (isStreaming) {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: newMode } });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: newDeviceId } } });
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
       } catch (err) {
-        alert("ไม่สามารถเปิดกล้องเพื่อสลับได้");
+        alert("ไม่สามารถเปลี่ยนกล้องได้");
         stopCamera();
       }
     }
@@ -264,7 +294,24 @@ export default function UltimatePerformancePage() {
             )}
           </div>
 
-          <div className="mt-2 md:mt-auto flex flex-col gap-3">
+          <div className="mt-2 flex flex-col gap-3">
+            {/* 🌟 เพิ่ม Dropdown เลือกกล้องตรงนี้ */}
+            <div className="bg-gray-900 border border-gray-800 p-4 rounded-2xl shadow-lg">
+              <label className="block text-gray-400 text-xs font-bold mb-2 uppercase tracking-widest">📷 เลือกกล้อง</label>
+              <select
+                className="w-full bg-gray-800 text-white border border-gray-700 rounded-xl px-4 py-3 outline-none focus:border-green-500 transition-colors cursor-pointer"
+                value={selectedDeviceId}
+                onChange={handleCameraChange}
+              >
+                {cameras.length === 0 && <option value="">กำลังค้นหากล้อง...</option>}
+                {cameras.map((cam, idx) => (
+                  <option key={cam.deviceId} value={cam.deviceId}>
+                    {cam.label || `กล้องตัวที่ ${idx + 1}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {!isStreaming ? (
               <button 
                 className={`w-full font-black py-5 rounded-2xl transition-all shadow-lg text-xl flex items-center justify-center gap-2 ${
@@ -299,15 +346,6 @@ export default function UltimatePerformancePage() {
                 หยุดกล้อง
               </button>
             )}
-
-            <button 
-              className="w-full bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold py-3 rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2"
-              onClick={toggleCamera}
-              disabled={!isModelReady}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-              สลับกล้อง ({facingMode === "user" ? "หน้า" : "หลัง"})
-            </button>
           </div>
         </div>
       </main>
