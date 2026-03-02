@@ -28,25 +28,24 @@ export default function UltimatePerformancePage() {
   const [history, setHistory] = useState<DetectHistory[]>([]);
   const [isModelReady, setIsModelReady] = useState(false);
   
-  // 🌟 เพิ่ม State สำหรับระบบเลือกกล้อง
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+  const [activeConstraint, setActiveConstraint] = useState<"facingMode" | "deviceId">("facingMode");
 
-  // 🌟 ฟังก์ชันค้นหากล้องทั้งหมดในเครื่อง
+  const facingModeRef = useRef<"user" | "environment">("user");
+  const activeConstraintRef = useRef<"facingMode" | "deviceId">("facingMode");
+
+  useEffect(() => { facingModeRef.current = facingMode; }, [facingMode]);
+  useEffect(() => { activeConstraintRef.current = activeConstraint; }, [activeConstraint]);
+
   useEffect(() => {
     async function getCameras() {
       try {
-        // แอบเปิดกล้องแว๊บเดียวเพื่อขอสิทธิ์ จะได้อ่านชื่อกล้อง (Label) ได้
         const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter(device => device.kind === 'videoinput');
-        
         setCameras(videoInputs);
-        if (videoInputs.length > 0) {
-          setSelectedDeviceId(videoInputs[0].deviceId); // เลือกกล้องตัวแรกเป็นค่าเริ่มต้น
-        }
-        
-        // ปิดกล้องที่แอบเปิด
         tempStream.getTracks().forEach(t => t.stop());
       } catch (err) {
         console.error("ไม่สามารถดึงข้อมูลกล้องได้:", err);
@@ -114,14 +113,23 @@ export default function UltimatePerformancePage() {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
       }
+      
+      ctx.save();
+      const shouldMirror = activeConstraintRef.current === "facingMode" && facingModeRef.current === "user";
+      if (shouldMirror) {
+        ctx.scale(-1, 1);
+        ctx.translate(-canvas.width, 0);
+      }
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
       if (!isWorkerBusy.current && workerRef.current) {
         isWorkerBusy.current = true;
         const offCanvas = document.createElement("canvas");
         offCanvas.width = 416; 
         offCanvas.height = 416; 
         const offCtx = offCanvas.getContext("2d", { willReadFrequently: true })!;
-        offCtx.drawImage(video, 0, 0, 416, 416); 
+        offCtx.drawImage(canvas, 0, 0, 416, 416); 
         const imageData = offCtx.getImageData(0, 0, 416, 416).data; 
         workerRef.current.postMessage({ type: "DETECT", payload: { imageData } });
       }
@@ -192,22 +200,35 @@ export default function UltimatePerformancePage() {
     }
   }
 
-  // 🌟 อัปเดตการเปิดกล้องให้ใช้ ID กล้องที่เลือก
-  async function startCamera() {
-    try {
-      const constraints = selectedDeviceId 
-        ? { video: { deviceId: { exact: selectedDeviceId } } } 
-        : { video: true };
+  async function applyCameraSettings(constraintType: "facingMode" | "deviceId", mode: "user" | "environment", deviceId: string) {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    
+    let constraints: any = { video: true };
+    if (constraintType === "deviceId" && deviceId) {
+      constraints = { video: { deviceId: { exact: deviceId } } };
+    } else {
+      constraints = { video: { facingMode: mode } };
+    }
 
+    try {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
-      videoRef.current!.srcObject = stream;
-      await videoRef.current!.play();
-      setIsStreaming(true);
-      requestAnimationFrame(masterLoop);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
     } catch (err) {
-      alert("ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการเข้าถึงกล้องถ่ายรูป");
+      alert("ไม่สามารถเปิดกล้องได้ หรืออุปกรณ์ไม่รองรับ");
+      stopCamera();
     }
+  }
+
+  async function startCamera() {
+    setIsStreaming(true);
+    await applyCameraSettings(activeConstraint, facingMode, selectedDeviceId);
+    requestAnimationFrame(masterLoop);
   }
 
   function stopCamera() {
@@ -227,25 +248,27 @@ export default function UltimatePerformancePage() {
     setStatus("ปิดกล้องแล้ว");
   }
 
-  // 🌟 ฟังก์ชันเมื่อผู้ใช้เปลี่ยนตัวเลือกกล้องใน Dropdown
-  async function handleCameraChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const newDeviceId = e.target.value;
-    setSelectedDeviceId(newDeviceId);
+  async function toggleCameraFacingMode() {
+    const newMode = facingMode === "user" ? "environment" : "user";
+    setFacingMode(newMode);
+    setActiveConstraint("facingMode");
+    setSelectedDeviceId(""); 
 
-    // ถ้ากล้องกำลังเปิดอยู่ ให้สลับภาพกล้องให้ทันที
     if (isStreaming) {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: newDeviceId } } });
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-      } catch (err) {
-        alert("ไม่สามารถเปลี่ยนกล้องได้");
-        stopCamera();
-      }
+      await applyCameraSettings("facingMode", newMode, "");
+    }
+  }
+
+  async function handleDeviceChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const val = e.target.value;
+    if (val === "") {
+      setActiveConstraint("facingMode");
+      setSelectedDeviceId("");
+      if (isStreaming) await applyCameraSettings("facingMode", facingMode, "");
+    } else {
+      setActiveConstraint("deviceId");
+      setSelectedDeviceId(val);
+      if (isStreaming) await applyCameraSettings("deviceId", facingMode, val);
     }
   }
 
@@ -295,15 +318,15 @@ export default function UltimatePerformancePage() {
           </div>
 
           <div className="mt-2 flex flex-col gap-3">
-            {/* 🌟 เพิ่ม Dropdown เลือกกล้องตรงนี้ */}
             <div className="bg-gray-900 border border-gray-800 p-4 rounded-2xl shadow-lg">
-              <label className="block text-gray-400 text-xs font-bold mb-2 uppercase tracking-widest">📷 เลือกกล้อง</label>
+              <label className="block text-gray-400 text-xs font-bold mb-2 uppercase tracking-widest">📷 สลับอุปกรณ์ (Device)</label>
               <select
-                className="w-full bg-gray-800 text-white border border-gray-700 rounded-xl px-4 py-3 outline-none focus:border-green-500 transition-colors cursor-pointer"
-                value={selectedDeviceId}
-                onChange={handleCameraChange}
+                className="w-full bg-gray-800 text-white border border-gray-700 rounded-xl px-4 py-3 outline-none focus:border-green-500 transition-colors cursor-pointer text-sm"
+                value={activeConstraint === "facingMode" ? "" : selectedDeviceId}
+                onChange={handleDeviceChange}
+                disabled={!isModelReady}
               >
-                {cameras.length === 0 && <option value="">กำลังค้นหากล้อง...</option>}
+                <option value="">โหมดออโต้ (กล้องหน้า/หลัง)</option>
                 {cameras.map((cam, idx) => (
                   <option key={cam.deviceId} value={cam.deviceId}>
                     {cam.label || `กล้องตัวที่ ${idx + 1}`}
@@ -346,6 +369,19 @@ export default function UltimatePerformancePage() {
                 หยุดกล้อง
               </button>
             )}
+
+            <button 
+              className={`w-full font-bold py-3 rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2 ${
+                !isModelReady 
+                  ? "bg-gray-900 text-gray-600 cursor-not-allowed" 
+                  : "bg-gray-800 hover:bg-gray-700 text-gray-300 cursor-pointer"
+              }`}
+              onClick={toggleCameraFacingMode}
+              disabled={!isModelReady}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              สลับหน้า/หลัง ({facingMode === "user" ? "หน้า" : "หลัง"})
+            </button>
           </div>
         </div>
       </main>
