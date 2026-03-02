@@ -21,11 +21,14 @@ export default function UltimatePerformancePage() {
   const lastDetectTimeRef = useRef<number>(Date.now());
   const classesRef = useRef<string[]>([]);
   const lastCaptureRef = useRef({ label: "", time: 0 });
+
   const [status, setStatus] = useState("กำลังเตรียมระบบแปลภาษา...");
   const [detection, setDetection] = useState({ label: "-", confidence: 0, isDetecting: false });
   const [isStreaming, setIsStreaming] = useState(false);
   const [history, setHistory] = useState<DetectHistory[]>([]);
   const [isModelReady, setIsModelReady] = useState(false);
+  
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
 
   useEffect(() => {
     const worker = new Worker("/yolo-worker.js");
@@ -125,6 +128,7 @@ export default function UltimatePerformancePage() {
         const isConfident = box.prob >= 0.50;
         const boxColor = isConfident ? "#10B981" : "#F59E0B"; 
         const displayText = isConfident ? `${labelText} ${Math.round(box.prob * 100)}%` : `กำลังวิเคราะห์...`;
+        
         ctx.strokeStyle = boxColor;
         ctx.lineWidth = 6; 
         ctx.strokeRect(rx, ry, rw, rh);
@@ -133,13 +137,14 @@ export default function UltimatePerformancePage() {
         ctx.fillStyle = "#FFFFFF"; 
         ctx.font = "bold 24px Arial";
         ctx.fillText(displayText, rx + 10, ry - 12);
+        
         if (box.prob >= 0.60) {
           const now = Date.now();
           const timeSinceLastCapture = now - lastCaptureRef.current.time;
           
           if (labelText !== lastCaptureRef.current.label || timeSinceLastCapture > 3000) {
             lastCaptureRef.current = { label: labelText, time: now };
-            const imageBase64 = canvas.toDataURL("image/jpeg", 0.7); // ถ่ายรูป
+            const imageBase64 = canvas.toDataURL("image/jpeg", 0.7);
             
             setHistory(prev => {
               const newRecord: DetectHistory = {
@@ -149,11 +154,10 @@ export default function UltimatePerformancePage() {
                 confidence: Math.round(box.prob * 100),
                 timeStr: new Date(now).toLocaleTimeString('th-TH')
               };
-              return [newRecord, ...prev].slice(0, 12); // เก็บสูงสุด 12 รูป
+              return [newRecord, ...prev].slice(0, 12);
             });
           }
         }
-
       } else {
         smoothBoxRef.current = null;
       }
@@ -162,13 +166,13 @@ export default function UltimatePerformancePage() {
       requestAnimationFrame(masterLoop);
     }
   }
+
   async function startCamera() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
       streamRef.current = stream;
       videoRef.current!.srcObject = stream;
       await videoRef.current!.play();
-
       setIsStreaming(true);
       requestAnimationFrame(masterLoop);
     } catch (err) {
@@ -181,7 +185,6 @@ export default function UltimatePerformancePage() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
-    
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext("2d");
       if (ctx) {
@@ -192,6 +195,28 @@ export default function UltimatePerformancePage() {
     smoothBoxRef.current = null;
     setDetection({ label: "-", confidence: 0, isDetecting: false });
     setStatus("ปิดกล้องแล้ว");
+  }
+
+  async function toggleCamera() {
+    const newMode = facingMode === "user" ? "environment" : "user";
+    setFacingMode(newMode);
+
+    if (isStreaming) {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: newMode } });
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+      } catch (err) {
+        alert("ไม่สามารถเปิดกล้องเพื่อสลับได้");
+        stopCamera();
+      }
+    }
   }
 
   function clearHistory() {
@@ -222,18 +247,16 @@ export default function UltimatePerformancePage() {
             <video ref={videoRef} className="hidden" playsInline muted />
           </div>
         </div>
+
         <div className="w-full md:w-80 flex flex-col gap-4 shrink-0">
-          
           <div className="bg-gray-900 border border-gray-800 p-6 rounded-3xl text-center shadow-lg flex-1 flex flex-col justify-center min-h-[160px]">
             <h3 className="text-gray-500 text-xs font-bold tracking-[0.2em] mb-4 uppercase">คำแปล / Result</h3>
-            
             <div className={`text-5xl md:text-6xl font-black uppercase transition-colors duration-300 ${
                 detection.isDetecting ? "text-yellow-400 text-3xl md:text-4xl" : 
                 detection.label !== "-" ? "text-white" : "text-gray-700"
               }`}>
               {detection.label}
             </div>
-
             {detection.label !== "-" && !detection.isDetecting && (
               <div className="text-green-400 font-bold mt-4 bg-green-950/30 inline-block self-center px-3 py-1 rounded-full text-sm border border-green-900/50">
                 ความแม่นยำ: {detection.confidence}%
@@ -241,7 +264,7 @@ export default function UltimatePerformancePage() {
             )}
           </div>
 
-          <div className="mt-2 md:mt-auto">
+          <div className="mt-2 md:mt-auto flex flex-col gap-3">
             {!isStreaming ? (
               <button 
                 className={`w-full font-black py-5 rounded-2xl transition-all shadow-lg text-xl flex items-center justify-center gap-2 ${
@@ -276,6 +299,15 @@ export default function UltimatePerformancePage() {
                 หยุดกล้อง
               </button>
             )}
+
+            <button 
+              className="w-full bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold py-3 rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2"
+              onClick={toggleCamera}
+              disabled={!isModelReady}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              สลับกล้อง ({facingMode === "user" ? "หน้า" : "หลัง"})
+            </button>
           </div>
         </div>
       </main>
