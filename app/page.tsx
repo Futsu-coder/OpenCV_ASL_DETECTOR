@@ -52,14 +52,14 @@ export default function UltimatePerformancePage() {
           payload: { modelPath: "/models/yolo_asl.onnx", classes: classNames } 
         });
       } catch (e) {
-        setStatus("❌ โหลดข้อมูลไม่สำเร็จ กรุณารีเฟรชหน้าเว็บ");
+        setStatus("โหลดข้อมูลไม่สำเร็จ กรุณารีเฟรชหน้าเว็บ");
       }
     };
 
     worker.onmessage = (e) => {
       const { type, boxes, error } = e.data;
       if (type === "READY") {
-        setStatus("✅ กล้องพร้อมแล้วกดปุ่มได้");
+        setStatus("กล้องพร้อมแล้วกดปุ่มได้");
         setIsModelReady(true); // 🌟 ปลดล็อกปุ่มเปิดกล้อง
       } else if (type === "RESULT") {
         boxesRef.current = boxes;
@@ -158,7 +158,7 @@ export default function UltimatePerformancePage() {
         ctx.fillText(displayText, rx + 10, ry - 12);
 
         // 🌟 ระบบถ่ายรูปอัตโนมัติ (แชะภาพเมื่อมั่นใจเกิน 70%)
-        if (box.prob >= 0.70) {
+        if (box.prob >= 0.60) {
           const now = Date.now();
           const timeSinceLastCapture = now - lastCaptureRef.current.time;
           
