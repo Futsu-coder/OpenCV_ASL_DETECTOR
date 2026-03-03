@@ -33,6 +33,9 @@ export default function UltimatePerformancePage() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [activeConstraint, setActiveConstraint] = useState<"facingMode" | "deviceId">("facingMode");
 
+  const [composedWord, setComposedWord] = useState<string>("");
+  const textInputRef = useRef<HTMLInputElement>(null);
+
   const facingModeRef = useRef<"user" | "environment">("user");
   const activeConstraintRef = useRef<"facingMode" | "deviceId">("facingMode");
 
@@ -133,10 +136,12 @@ export default function UltimatePerformancePage() {
         const imageData = offCtx.getImageData(0, 0, 416, 416).data; 
         workerRef.current.postMessage({ type: "DETECT", payload: { imageData } });
       }
+
       if (Date.now() - lastDetectTimeRef.current > 1000) {
         boxesRef.current = [];
         smoothBoxRef.current = null;
         setDetection({ label: "-", confidence: 0, isDetecting: false });
+        lastCaptureRef.current.label = ""; 
       }
 
       const scaleX = canvas.width / 416; 
@@ -160,22 +165,57 @@ export default function UltimatePerformancePage() {
         const labelText = classesRef.current[box.classId];
         const isConfident = box.prob >= 0.50;
         const boxColor = isConfident ? "#10B981" : "#F59E0B"; 
-        const displayText = isConfident ? `${labelText} ${Math.round(box.prob * 100)}%` : `กำลังวิเคราะห์...`;
         
+        const now = Date.now();
+        const timeSinceLastCapture = now - lastCaptureRef.current.time;
+        const isCooldown = timeSinceLastCapture < 3000;
+        
+        // 🌟 ตัดคำเป็นหลายบรรทัดให้อัตโนมัติ (Array of strings)
+        let displayLines: string[] = [];
+        if (isConfident) {
+          if (isCooldown) {
+            displayLines = [
+              "รอสักครู่...", 
+              `กำลังสะกดคำต่อไป (${Math.ceil((3000 - timeSinceLastCapture)/1000)}s)`
+            ];
+          } else {
+            displayLines = [`${labelText} ${Math.round(box.prob * 100)}%`];
+          }
+        } else {
+          displayLines = ["กำลังวิเคราะห์..."];
+        }
+
+        ctx.font = "bold 24px Arial";
+        
+        // หาความกว้างของข้อความบรรทัดที่ยาวที่สุด
+        let maxTextWidth = 0;
+        displayLines.forEach(line => {
+          const textWidth = ctx.measureText(line).width;
+          if (textWidth > maxTextWidth) maxTextWidth = textWidth;
+        });
+
+        // คำนวณความสูงและความกว้างของพื้นหลังให้พอดิบพอดี
+        const bgWidth = Math.max(rw, maxTextWidth + 20); 
+        const lineHeight = 28; // ระยะห่างแต่ละบรรทัด
+        const bgHeight = 12 + (displayLines.length * lineHeight); 
+        
+        // วาดขอบกล่องหลัก
         ctx.strokeStyle = boxColor;
         ctx.lineWidth = 6; 
         ctx.strokeRect(rx, ry, rw, rh);
+        
+        // วาดพื้นหลังป้ายข้อความ (ยืดตามขนาดที่คำนวณไว้)
         ctx.fillStyle = boxColor;
-        ctx.fillRect(rx, ry - 40, rw, 40);
+        ctx.fillRect(rx, ry - bgHeight, bgWidth, bgHeight);
+        
+        // วาดข้อความทีละบรรทัด
         ctx.fillStyle = "#FFFFFF"; 
-        ctx.font = "bold 24px Arial";
-        ctx.fillText(displayText, rx + 10, ry - 12);
+        displayLines.forEach((line, index) => {
+          ctx.fillText(line, rx + 10, ry - bgHeight + 24 + (index * lineHeight));
+        });
         
         if (box.prob >= 0.60) {
-          const now = Date.now();
-          const timeSinceLastCapture = now - lastCaptureRef.current.time;
-          
-          if (labelText !== lastCaptureRef.current.label || timeSinceLastCapture > 3000) {
+          if (timeSinceLastCapture > 3000) {
             lastCaptureRef.current = { label: labelText, time: now };
             const imageBase64 = canvas.toDataURL("image/jpeg", 0.7);
             
@@ -188,6 +228,20 @@ export default function UltimatePerformancePage() {
                 timeStr: new Date(now).toLocaleTimeString('th-TH')
               };
               return [newRecord, ...prev].slice(0, 12);
+            });
+
+            setComposedWord(prev => {
+              if (textInputRef.current) {
+                const start = textInputRef.current.selectionStart || prev.length;
+                const end = textInputRef.current.selectionEnd || prev.length;
+                const newVal = prev.slice(0, start) + labelText + prev.slice(end);
+                
+                setTimeout(() => {
+                  textInputRef.current!.setSelectionRange(start + labelText.length, start + labelText.length);
+                }, 0);
+                return newVal;
+              }
+              return prev + labelText;
             });
           }
         }
@@ -272,13 +326,48 @@ export default function UltimatePerformancePage() {
     }
   }
 
+  function handleBackspace() {
+    if (!textInputRef.current) return;
+    const start = textInputRef.current.selectionStart || 0;
+    const end = textInputRef.current.selectionEnd || 0;
+
+    if (start === end && start > 0) {
+      const newVal = composedWord.slice(0, start - 1) + composedWord.slice(start);
+      setComposedWord(newVal);
+      setTimeout(() => {
+        textInputRef.current!.setSelectionRange(start - 1, start - 1);
+        textInputRef.current!.focus();
+      }, 0);
+    } else if (start !== end) {
+      const newVal = composedWord.slice(0, start) + composedWord.slice(end);
+      setComposedWord(newVal);
+      setTimeout(() => {
+        textInputRef.current!.setSelectionRange(start, start);
+        textInputRef.current!.focus();
+      }, 0);
+    }
+  }
+
+  function handleSpace() {
+    if (!textInputRef.current) return;
+    const start = textInputRef.current.selectionStart || composedWord.length;
+    const end = textInputRef.current.selectionEnd || composedWord.length;
+    
+    const newVal = composedWord.slice(0, start) + " " + composedWord.slice(end);
+    setComposedWord(newVal);
+    setTimeout(() => {
+      textInputRef.current!.setSelectionRange(start + 1, start + 1);
+      textInputRef.current!.focus();
+    }, 0);
+  }
+
   function clearHistory() {
     setHistory([]);
   }
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col p-4 md:p-8 font-sans selection:bg-green-500 selection:text-white">
-      <header className="w-full max-w-4xl mx-auto text-center mb-6 md:mb-10 mt-4">
+      <header className="w-full max-w-4xl mx-auto text-center mb-6 mt-2">
         <h1 className="text-3xl md:text-5xl font-black text-white mb-3 tracking-tight">
           แปลภาษามือ <span className="text-green-400">ASL</span> 🤟
         </h1>
@@ -385,6 +474,53 @@ export default function UltimatePerformancePage() {
           </div>
         </div>
       </main>
+
+      <div className="w-full max-w-5xl mx-auto mt-6">
+        <div className="bg-gray-900 border border-gray-800 p-6 md:p-8 rounded-3xl shadow-lg">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-gray-400 text-xs md:text-sm font-bold tracking-[0.2em] uppercase">📝 ข้อความที่สะกดได้</h3>
+            <span className="text-xs text-green-400 bg-green-950/50 px-3 py-1 rounded-full border border-green-900/50">พิมพ์อัตโนมัติ (หน่วง 3 วินาที)</span>
+          </div>
+          
+          <div className="bg-black border border-gray-700 rounded-2xl p-6 min-h-[120px] flex items-center shadow-inner">
+            <input
+              ref={textInputRef}
+              type="text"
+              value={composedWord}
+              onChange={(e) => setComposedWord(e.target.value)}
+              placeholder="ทำภาษามือเพื่อเริ่มสะกดคำ..."
+              className="w-full bg-transparent text-center text-4xl md:text-5xl font-black tracking-widest text-white outline-none placeholder-gray-800 border-none focus:ring-0"
+            />
+          </div>
+          
+          <div className="flex flex-wrap gap-3 mt-5 justify-end">
+            <button 
+              onClick={handleSpace} 
+              className="bg-gray-800 hover:bg-gray-700 text-white px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 active:scale-95"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 19h16" /></svg>
+              เว้นวรรค
+            </button>
+            <button 
+              onClick={handleBackspace} 
+              className="bg-gray-800 hover:bg-gray-700 text-white px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 active:scale-95"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414 6.414a2 2 0 001.414.586H19a2 2 0 002-2V7a2 2 0 00-2-2h-8.172a2 2 0 00-1.414.586L3 12z" /></svg>
+              ลบจุดที่เลือก
+            </button>
+            <button 
+              onClick={() => {
+                setComposedWord("");
+                textInputRef.current?.focus();
+              }} 
+              className="bg-red-900/50 hover:bg-red-800/80 text-red-200 border border-red-900 px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 active:scale-95"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              ล้างข้อความ
+            </button>
+          </div>
+        </div>
+      </div>
 
       {history.length > 0 && (
         <div className="w-full max-w-5xl mx-auto mt-10 animate-fade-in">
